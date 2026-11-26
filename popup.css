@@ -165,3 +165,12 @@ input:checked + .slider::before {
 .btn-primary:hover {
   background-color: #1d4ed8;
 }
+
+.btn-punchout {
+  background-color: #475569;
+  color: #ffffff;
+}
+
+.btn-punchout:hover {
+  background-color: #334155;
+}

@@ -1,5 +1,6 @@
 const TARGET_URL = "https://nara-ta.ddrive.site/teacher_attendance/";
-const BUTTON_ID = "btn_punchin";
+const PUNCH_IN_BUTTON_ID = "btn_punchin";
+const PUNCH_OUT_BUTTON_ID = "btn_punchout";
 const START_HOUR = 2; // 朝2時以降を「その日の朝」として扱う
 
 const DEFAULT_SETTINGS = {
@@ -60,21 +61,22 @@ async function updateBadge() {
 let isCreatingTab = false;
 
 /**
- * 本日の打刻処理を実行すべきか判定し、必要ならタブを開く
- * @param {boolean} force - 手動テスト実行時は true
+ * 打刻用のタブを開く共通処理
+ * @param {"punchin" | "punchout"} actionType
+ * @param {boolean} force - 手動実行時は true
  */
-async function tryTriggerPunchIn(force = false) {
+async function tryTriggerPunch(actionType, force = false) {
   if (isCreatingTab) {
     return { triggered: false, reason: "打刻処理を起動中です" };
   }
   isCreatingTab = true;
 
   try {
-    const settings = await getSettings();
-    const today = getTodayString();
-    const currentHour = new Date().getHours();
+    if (actionType === "punchin" && !force) {
+      const settings = await getSettings();
+      const today = getTodayString();
+      const currentHour = new Date().getHours();
 
-    if (!force) {
       if (!settings.enabled) {
         return { triggered: false, reason: "自動打刻が無効です" };
       }
@@ -116,11 +118,15 @@ async function tryTriggerPunchIn(force = false) {
     await chrome.storage.session.set({
       pendingTabId: tab.id,
       pendingTimestamp: Date.now(),
-      pendingForce: force
+      pendingForce: force,
+      pendingAction: actionType
     });
 
     await chrome.storage.local.set({
-      lastStatus: "打刻ページを開いています..."
+      lastStatus:
+        actionType === "punchout"
+          ? "退勤打刻ページを開いています..."
+          : "打刻ページを開いています..."
     });
 
     return { triggered: true, tabId: tab.id };
@@ -130,10 +136,25 @@ async function tryTriggerPunchIn(force = false) {
 }
 
 /**
- * ページ内で実行される関数：btn_punchin を探してクリックする
- * すでに disabled="" になっている場合は「本日打刻済み」として扱う
+ * 本日の出勤打刻処理を実行すべきか判定し、必要ならタブを開く
+ * @param {boolean} force - 手動テスト実行時は true
  */
-function clickPunchInButtonInPage(buttonId, timeoutMs) {
+async function tryTriggerPunchIn(force = false) {
+  return tryTriggerPunch("punchin", force);
+}
+
+/**
+ * 退勤打刻処理を実行するためタブを開く
+ */
+async function tryTriggerPunchOut() {
+  return tryTriggerPunch("punchout", true);
+}
+
+/**
+ * ページ内で実行される関数：指定IDのボタンを探してクリックする
+ * すでに disabled="" になっている場合は「すでに打刻済み」として扱う
+ */
+function clickPunchButtonInPage(buttonId, actionLabel, timeoutMs) {
   return new Promise((resolve) => {
     let finished = false;
     let disabledDetectedTimer = null;
@@ -157,7 +178,7 @@ function clickPunchInButtonInPage(buttonId, timeoutMs) {
         finish({
           success: true,
           alreadyPunched: false,
-          message: "出勤ボタンをクリックしました"
+          message: `${actionLabel}ボタンをクリックしました`
         });
         return;
       }
@@ -218,7 +239,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   const session = await chrome.storage.session.get([
     "pendingTabId",
-    "pendingForce"
+    "pendingForce",
+    "pendingAction"
   ]);
   if (session.pendingTabId !== tabId) return;
 
@@ -230,18 +252,24 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     return;
   }
 
+  const actionType = session.pendingAction || "punchin";
+  const isPunchOut = actionType === "punchout";
+  const buttonId = isPunchOut ? PUNCH_OUT_BUTTON_ID : PUNCH_IN_BUTTON_ID;
+  const actionLabel = isPunchOut ? "退勤" : "出勤";
+
   // 多重実行を防ぐため先に pendingTabId をクリア
   await chrome.storage.session.remove([
     "pendingTabId",
     "pendingTimestamp",
-    "pendingForce"
+    "pendingForce",
+    "pendingAction"
   ]);
 
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: clickPunchInButtonInPage,
-      args: [BUTTON_ID, 15000]
+      func: clickPunchButtonInPage,
+      args: [buttonId, actionLabel, 15000]
     });
 
     const outcome = results?.[0]?.result;
@@ -249,14 +277,21 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       const today = getTodayString();
       const time = getCurrentTimeString();
       const statusMessage = outcome.alreadyPunched
-        ? `${today} ${time} 確認：すでに打刻済みでした`
-        : `${today} ${time} に出勤ボタンをクリックしました`;
-      await chrome.storage.local.set({
-        lastPunchDate: today,
-        lastPunchTime: time,
-        lastStatus: statusMessage
-      });
-      await updateBadge();
+        ? `${today} ${time} 確認：すでに${actionLabel}打刻済みでした`
+        : `${today} ${time} に${actionLabel}ボタンをクリックしました`;
+
+      if (isPunchOut) {
+        await chrome.storage.local.set({
+          lastStatus: statusMessage
+        });
+      } else {
+        await chrome.storage.local.set({
+          lastPunchDate: today,
+          lastPunchTime: time,
+          lastStatus: statusMessage
+        });
+        await updateBadge();
+      }
     } else {
       await chrome.storage.local.set({
         lastStatus: `失敗: ${outcome?.reason || "不明なエラー"}`
@@ -278,7 +313,8 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     await chrome.storage.session.remove([
       "pendingTabId",
       "pendingTimestamp",
-      "pendingForce"
+      "pendingForce",
+      "pendingAction"
     ]);
   }
 });
@@ -319,6 +355,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     if (message.type === "RUN_NOW") {
       const res = await tryTriggerPunchIn(true);
+      sendResponse(res);
+    } else if (message.type === "PUNCH_OUT") {
+      const res = await tryTriggerPunchOut();
       sendResponse(res);
     } else if (message.type === "UPDATE_BADGE") {
       await updateBadge();

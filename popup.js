@@ -56,6 +56,11 @@ document.addEventListener("DOMContentLoaded", () => {
     await chrome.runtime.sendMessage({ type: "RUN_NOW" });
     window.close();
   });
+
+  document.getElementById("punchOutBtn").addEventListener("click", async () => {
+    await chrome.runtime.sendMessage({ type: "PUNCH_OUT" });
+    window.close();
+  });
 });
 
 chrome.storage.onChanged.addListener(() => {
