@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "出勤一打",
+  "version": "0.1",
+  "description": "毎朝、Chrome への初回ログイン時に勤怠アプリを自動起動し、出勤打刻を行います。",
+  "permissions": [
+    "storage",
+    "idle",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://nara-ta.ddrive.site/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "出勤一打",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
