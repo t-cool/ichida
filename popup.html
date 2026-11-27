@@ -13,6 +13,11 @@
       <span id="todayBadge" class="badge badge-pending">未打刻</span>
     </header>
 
+    <div class="actions">
+      <button id="runNowBtn" class="btn btn-primary">手動で出勤</button>
+      <button id="punchOutBtn" class="btn btn-punchout">退勤を記録</button>
+    </div>
+
     <section class="card">
       <div class="row">
         <label for="enabledToggle" class="label">自動打刻を有効にする</label>
@@ -54,11 +59,6 @@
       <div id="statusText" class="status-text">読み込み中...</div>
       <div id="lastPunchText" class="meta-text"></div>
     </section>
-
-    <div class="actions">
-      <button id="runNowBtn" class="btn btn-primary">手動で出勤</button>
-      <button id="punchOutBtn" class="btn btn-punchout">退勤を記録</button>
-    </div>
   </div>
   <script src="popup.js"></script>
 </body>
