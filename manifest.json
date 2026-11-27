@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "出勤一打",
-  "version": "0.3",
+  "version": "0.4",
   "description": "毎朝、Chrome への初回ログイン時に勤怠アプリを自動起動し、出勤打刻を行います。",
   "permissions": [
     "storage",
