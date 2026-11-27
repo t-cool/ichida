@@ -9,6 +9,14 @@ const DEFAULT_SETTINGS = {
 
 const DEFAULT_IP_HINT = "カンマ区切りで複数IPも指定できます";
 
+function getTodayString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function isValidIpAddress(ip) {
   // IPv4
   const ipv4Parts = ip.split(".");
@@ -42,12 +50,16 @@ function setIpHint(text, type = "") {
 async function render() {
   const data = await chrome.storage.local.get(DEFAULT_SETTINGS);
 
+  const runNowBtn = document.getElementById("runNowBtn");
   const enabledToggle = document.getElementById("enabledToggle");
   const ipFilterToggle = document.getElementById("ipFilterToggle");
   const ipConfigArea = document.getElementById("ipConfigArea");
   const allowedIpInput = document.getElementById("allowedIpInput");
   const statusText = document.getElementById("statusText");
   const lastPunchText = document.getElementById("lastPunchText");
+
+  const isPunchedToday = data.lastPunchDate === getTodayString();
+  runNowBtn.classList.toggle("is-punched", isPunchedToday);
 
   enabledToggle.checked = Boolean(data.enabled);
   ipFilterToggle.checked = Boolean(data.ipFilterEnabled);

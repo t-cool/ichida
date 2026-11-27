@@ -1,6 +1,7 @@
 const TARGET_URL = "https://nara-ta.ddrive.site/teacher_attendance/";
 const PUNCH_IN_BUTTON_ID = "btn_punchin";
 const PUNCH_OUT_BUTTON_ID = "btn_punchout";
+const HISTORY_CLOSE_BUTTON_ID = "btn_history_close";
 const START_HOUR = 2; // 朝2時以降を「その日の朝」として扱う
 const IP_CHECK_ENDPOINTS = [
   { url: "https://cloudflare.com/cdn-cgi/trace", type: "trace" },
@@ -18,6 +19,14 @@ const DEFAULT_SETTINGS = {
   lastPunchTime: null,
   lastStatus: "待機中"
 };
+
+/**
+ * URLが勤怠打刻ページかどうかを判定する
+ */
+function isTargetAttendanceUrl(url) {
+  if (!url) return false;
+  return url.startsWith(TARGET_URL) || url === TARGET_URL.replace(/\/$/, "");
+}
 
 /**
  * ローカルタイムゾーンで YYYY-MM-DD を返す
@@ -229,6 +238,36 @@ async function tryTriggerPunch(actionType, force = false) {
       }
     }
 
+    // 現在のタブがすでに勤怠ページなら新規タブを開かずそのまま打刻する
+    const [activeTab] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true
+    });
+
+    if (activeTab?.id && isTargetAttendanceUrl(activeTab.url)) {
+      const actionLabel = actionType === "punchout" ? "退勤" : "出勤";
+      if (activeTab.status === "complete") {
+        await chrome.storage.local.set({
+          lastStatus: `現在のタブで${actionLabel}打刻を実行しています...`
+        });
+        executePunchInTab(activeTab.id, actionType);
+        return { triggered: true, tabId: activeTab.id, reusedTab: true };
+      }
+
+      await chrome.storage.session.set({
+        pendingTabId: activeTab.id,
+        pendingTimestamp: Date.now(),
+        pendingForce: force,
+        pendingAction: actionType
+      });
+
+      await chrome.storage.local.set({
+        lastStatus: "現在のタブの読み込み完了を待っています..."
+      });
+
+      return { triggered: true, tabId: activeTab.id, reusedTab: true };
+    }
+
     const tab = await chrome.tabs.create({
       url: TARGET_URL,
       active: true
@@ -270,13 +309,33 @@ async function tryTriggerPunchOut() {
 }
 
 /**
- * ページ内で実行される関数：指定IDのボタンを探してクリックする
+ * ページ内で実行される関数：履歴画面が開いている場合は閉じてから指定IDのボタンを探してクリックする
  * すでに disabled="" になっている場合は「すでに打刻済み」として扱う
  */
-function clickPunchButtonInPage(buttonId, actionLabel, timeoutMs) {
+function clickPunchButtonInPage(
+  buttonId,
+  actionLabel,
+  timeoutMs,
+  historyCloseButtonId
+) {
   return new Promise((resolve) => {
     let finished = false;
     let disabledDetectedTimer = null;
+    let historyCloseClicked = false;
+
+    const isElementVisible = (el) => {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.opacity === "0"
+      ) {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
 
     const finish = (result) => {
       if (finished) return;
@@ -289,6 +348,17 @@ function clickPunchButtonInPage(buttonId, actionLabel, timeoutMs) {
     };
 
     const checkButton = () => {
+      const historyCloseBtn = historyCloseButtonId
+        ? document.getElementById(historyCloseButtonId)
+        : null;
+      if (isElementVisible(historyCloseBtn)) {
+        if (!historyCloseClicked) {
+          historyCloseClicked = true;
+          historyCloseBtn.click();
+        }
+        return;
+      }
+
       const btn = document.getElementById(buttonId);
       if (!btn) return;
 
@@ -324,7 +394,7 @@ function clickPunchButtonInPage(buttonId, actionLabel, timeoutMs) {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["disabled"]
+        attributeFilter: ["disabled", "style", "class", "hidden"]
       });
     }
 
@@ -351,44 +421,20 @@ function clickPunchButtonInPage(buttonId, actionLabel, timeoutMs) {
 }
 
 /**
- * 対象タブの読み込み完了を検知してボタンをクリックする
+ * 指定タブ内で出勤/退勤ボタンのクリックを実行し、結果を保存する
+ * @param {number} tabId
+ * @param {"punchin" | "punchout"} actionType
  */
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status !== "complete") return;
-
-  const session = await chrome.storage.session.get([
-    "pendingTabId",
-    "pendingForce",
-    "pendingAction"
-  ]);
-  if (session.pendingTabId !== tabId) return;
-
-  // 対象URLに到達していない場合（ログイン画面へリダイレクト中など）はそのまま待機
-  if (!tab.url || !tab.url.startsWith(TARGET_URL)) {
-    await chrome.storage.local.set({
-      lastStatus: "ログイン画面等を表示中（対象ページへの遷移を待機しています）"
-    });
-    return;
-  }
-
-  const actionType = session.pendingAction || "punchin";
+async function executePunchInTab(tabId, actionType) {
   const isPunchOut = actionType === "punchout";
   const buttonId = isPunchOut ? PUNCH_OUT_BUTTON_ID : PUNCH_IN_BUTTON_ID;
   const actionLabel = isPunchOut ? "退勤" : "出勤";
-
-  // 多重実行を防ぐため先に pendingTabId をクリア
-  await chrome.storage.session.remove([
-    "pendingTabId",
-    "pendingTimestamp",
-    "pendingForce",
-    "pendingAction"
-  ]);
 
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       func: clickPunchButtonInPage,
-      args: [buttonId, actionLabel, 15000]
+      args: [buttonId, actionLabel, 15000, HISTORY_CLOSE_BUTTON_ID]
     });
 
     const outcome = results?.[0]?.result;
@@ -421,6 +467,40 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       lastStatus: `エラー: ${err.message}`
     });
   }
+}
+
+/**
+ * 対象タブの読み込み完了を検知してボタンをクリックする
+ */
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+
+  const session = await chrome.storage.session.get([
+    "pendingTabId",
+    "pendingForce",
+    "pendingAction"
+  ]);
+  if (session.pendingTabId !== tabId) return;
+
+  // 対象URLに到達していない場合（ログイン画面へリダイレクト中など）はそのまま待機
+  if (!isTargetAttendanceUrl(tab.url)) {
+    await chrome.storage.local.set({
+      lastStatus: "ログイン画面等を表示中（対象ページへの遷移を待機しています）"
+    });
+    return;
+  }
+
+  const actionType = session.pendingAction || "punchin";
+
+  // 多重実行を防ぐため先に pendingTabId をクリア
+  await chrome.storage.session.remove([
+    "pendingTabId",
+    "pendingTimestamp",
+    "pendingForce",
+    "pendingAction"
+  ]);
+
+  await executePunchInTab(tabId, actionType);
 });
 
 /**
