@@ -23,6 +23,32 @@
       </div>
     </section>
 
+    <section class="card ip-card">
+      <div class="row">
+        <label for="ipFilterToggle" class="label">指定IPのみで自動打刻（任意）</label>
+        <label class="switch">
+          <input type="checkbox" id="ipFilterToggle" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div id="ipConfigArea" class="ip-config">
+        <label for="allowedIpInput" class="sub-label">学校のグローバルIP</label>
+        <input
+          type="text"
+          id="allowedIpInput"
+          class="text-input"
+          placeholder="例: 203.0.113.10"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="ip-actions">
+          <button type="button" id="fetchIpBtn" class="btn btn-small btn-outline">現在のIPを取得</button>
+          <button type="button" id="saveIpBtn" class="btn btn-small btn-secondary">保存</button>
+        </div>
+        <div id="ipHintText" class="meta-text">カンマ区切りで複数IPも指定できます</div>
+      </div>
+    </section>
+
     <section class="card status-card">
       <div class="status-title">ステータス</div>
       <div id="statusText" class="status-text">読み込み中...</div>

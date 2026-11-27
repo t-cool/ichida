@@ -2,9 +2,18 @@ const TARGET_URL = "https://nara-ta.ddrive.site/teacher_attendance/";
 const PUNCH_IN_BUTTON_ID = "btn_punchin";
 const PUNCH_OUT_BUTTON_ID = "btn_punchout";
 const START_HOUR = 2; // 朝2時以降を「その日の朝」として扱う
+const IP_CHECK_ENDPOINTS = [
+  { url: "https://cloudflare.com/cdn-cgi/trace", type: "trace" },
+  { url: "https://checkip.amazonaws.com/", type: "text" },
+  { url: "https://api.ipify.org?format=json", type: "json" },
+  { url: "https://1.1.1.1/cdn-cgi/trace", type: "trace" }
+];
+const IP_CACHE_TTL_MS = 60 * 1000;
 
 const DEFAULT_SETTINGS = {
   enabled: true,
+  ipFilterEnabled: false,
+  allowedGlobalIp: "",
   lastPunchDate: null,
   lastPunchTime: null,
   lastStatus: "待機中"
@@ -58,6 +67,94 @@ async function updateBadge() {
   }
 }
 
+/**
+ * 許可するグローバルIPの文字列を配列に分解する（カンマ・空白区切り対応）
+ */
+function parseAllowedIps(raw) {
+  return String(raw || "")
+    .split(/[\s,、]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * エンドポイントのレスポンスからIP文字列を取り出す
+ */
+async function extractIpFromResponse(res, type) {
+  if (type === "json") {
+    const data = await res.json();
+    return typeof data?.ip === "string" ? data.ip.trim() : "";
+  }
+  const text = await res.text();
+  if (type === "trace") {
+    const match = text.match(/^ip=(.+)$/m);
+    return match ? match[1].trim() : "";
+  }
+  return text.trim();
+}
+
+/**
+ * 現在のグローバルIPを取得する（自動判定時は短時間キャッシュを使用）
+ * @param {boolean} useCache
+ * @returns {Promise<{ ip: string | null, error?: string }>}
+ */
+async function fetchCurrentGlobalIpWithDetail(useCache = true) {
+  if (useCache) {
+    const cached = await chrome.storage.session.get([
+      "cachedGlobalIp",
+      "cachedGlobalIpAt"
+    ]);
+    if (
+      cached.cachedGlobalIp &&
+      cached.cachedGlobalIpAt &&
+      Date.now() - cached.cachedGlobalIpAt < IP_CACHE_TTL_MS
+    ) {
+      return { ip: cached.cachedGlobalIp };
+    }
+  }
+
+  const errors = [];
+  for (const endpoint of IP_CHECK_ENDPOINTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(endpoint.url, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      if (!res.ok) {
+        errors.push(`${new URL(endpoint.url).hostname}: HTTP ${res.status}`);
+        continue;
+      }
+      const ip = await extractIpFromResponse(res, endpoint.type);
+      if (ip) {
+        await chrome.storage.session.set({
+          cachedGlobalIp: ip,
+          cachedGlobalIpAt: Date.now()
+        });
+        return { ip };
+      }
+      errors.push(`${new URL(endpoint.url).hostname}: IPが空でした`);
+    } catch (err) {
+      errors.push(`${new URL(endpoint.url).hostname}: ${err.message || err.name}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { ip: null, error: errors.join(" / ") };
+}
+
+/**
+ * 現在のグローバルIPを取得する（文字列のみ返すラッパー）
+ * @param {boolean} useCache
+ * @returns {Promise<string | null>}
+ */
+async function fetchCurrentGlobalIp(useCache = true) {
+  const result = await fetchCurrentGlobalIpWithDetail(useCache);
+  return result.ip;
+}
+
 let isCreatingTab = false;
 
 /**
@@ -88,6 +185,28 @@ async function tryTriggerPunch(actionType, force = false) {
       }
       if (settings.lastPunchDate === today) {
         return { triggered: false, reason: "本日はすでに打刻済みです" };
+      }
+
+      if (settings.ipFilterEnabled) {
+        const allowedIps = parseAllowedIps(settings.allowedGlobalIp);
+        if (allowedIps.length === 0) {
+          const reason = "学校のグローバルIPが未設定のため自動打刻を待機中";
+          await chrome.storage.local.set({ lastStatus: reason });
+          return { triggered: false, reason };
+        }
+
+        const currentIp = await fetchCurrentGlobalIp(true);
+        if (!currentIp) {
+          const reason = "グローバルIPの取得に失敗したため自動打刻を待機中";
+          await chrome.storage.local.set({ lastStatus: reason });
+          return { triggered: false, reason };
+        }
+
+        if (!allowedIps.includes(currentIp)) {
+          const reason = `指定IP外（現在: ${currentIp}）のため自動打刻をスキップ`;
+          await chrome.storage.local.set({ lastStatus: reason });
+          return { triggered: false, reason };
+        }
       }
     }
 
@@ -353,15 +472,31 @@ chrome.runtime.onInstalled.addListener(async () => {
 // ポップアップからのメッセージ処理
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
-    if (message.type === "RUN_NOW") {
-      const res = await tryTriggerPunchIn(true);
-      sendResponse(res);
-    } else if (message.type === "PUNCH_OUT") {
-      const res = await tryTriggerPunchOut();
-      sendResponse(res);
-    } else if (message.type === "UPDATE_BADGE") {
-      await updateBadge();
-      sendResponse({ ok: true });
+    try {
+      if (message.type === "RUN_NOW") {
+        const res = await tryTriggerPunchIn(true);
+        sendResponse(res);
+      } else if (message.type === "PUNCH_OUT") {
+        const res = await tryTriggerPunchOut();
+        sendResponse(res);
+      } else if (message.type === "UPDATE_BADGE") {
+        await updateBadge();
+        sendResponse({ ok: true });
+      } else if (message.type === "GET_CURRENT_IP") {
+        const result = await fetchCurrentGlobalIpWithDetail(false);
+        if (result.ip) {
+          sendResponse({ ok: true, ip: result.ip });
+        } else {
+          sendResponse({
+            ok: false,
+            error: `グローバルIPの取得に失敗しました（${result.error || "ネットワーク接続を確認してください"}）`
+          });
+        }
+      } else {
+        sendResponse({ ok: false, error: "不明なリクエストです" });
+      }
+    } catch (err) {
+      sendResponse({ ok: false, error: err?.message || "内部エラーが発生しました" });
     }
   })();
   return true;

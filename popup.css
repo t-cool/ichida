@@ -174,3 +174,90 @@ input:checked + .slider::before {
 .btn-punchout:hover {
   background-color: #334155;
 }
+
+/* IP Filter Settings */
+.ip-card {
+  gap: 8px;
+}
+
+.ip-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid #f1f5f9;
+  transition: opacity 0.15s;
+}
+
+.ip-config.is-disabled {
+  opacity: 0.65;
+}
+
+.sub-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.text-input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #1e293b;
+  background-color: #ffffff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.ip-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-small {
+  padding: 6px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.btn-outline {
+  background-color: #f8fafc;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  flex: 1;
+}
+
+.btn-outline:hover:not(:disabled) {
+  background-color: #e2e8f0;
+}
+
+.btn-secondary {
+  background-color: #0f172a;
+  color: #ffffff;
+  width: 68px;
+  flex-shrink: 0;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #1e293b;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.hint-success {
+  color: #1e7e34;
+}
+
+.hint-error {
+  color: #dc2626;
+}
